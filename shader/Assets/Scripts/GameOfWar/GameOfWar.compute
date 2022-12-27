@@ -1,0 +1,163 @@
+#pragma kernel GameOfWar
+// Structs
+struct Rule{
+    uint lonelinessFactor;
+    uint overPopulationFactor;
+    uint teamConqueerFactor;
+    uint cellBirthFactor;
+};
+struct Team{
+    float4 activeColor;
+    float4 initialColorAndGreater;
+    float4 initialColorAndLesser;
+};
+
+
+// Buffers
+RWTexture2D<float4> Texture;
+RWStructuredBuffer<Rule> RuleBuffer;
+RWStructuredBuffer<Team> TeamBuffer;
+
+// Variables
+int screenSizeX;
+int screenSizeY;
+uint init;
+
+// Methods declarations
+//  Comparations
+bool compareTwoPixelsColors(float4 a, float4 b);
+bool compareTwoPixelsColorsIfGreaterOrEqual(float4 a, float4 b);
+bool compareTwoPixelsColorsIfLesserOrEqual(float4 pixelA, float4 pixelB);
+//  Tools
+float4 fadeToColor(float4 color, float4 finalColor);
+float4 averageColors (uint3 id);
+
+// Main
+[numthreads(1,1,1)]
+void GameOfWar (uint3 id : SV_DispatchThreadID)
+{
+    if(init == 1){
+        bool colorIsChosen = false;
+        for(uint i = 0; i < TeamBuffer.Length && !colorIsChosen; i++){
+            if( compareTwoPixelsColorsIfGreaterOrEqual(Texture[id.xy], TeamBuffer[i].initialColorAndGreater) &&
+                compareTwoPixelsColorsIfLesserOrEqual(Texture[id.xy], TeamBuffer[i].initialColorAndLesser)){
+                    Texture[id.xy] = TeamBuffer[i].activeColor;
+                    colorIsChosen = true;
+            }
+        }
+        if(colorIsChosen == false) Texture[id.xy] = averageColors(id);
+    } else {
+        // ! Hardcode !
+        uint sameTeamNeighborsCount[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        // For values
+        int currentPixelTeam = -1;
+        int strongestTeam = -1;
+        uint strongestTeamForce = 0;
+
+        // Calculate number of neighbors
+        for(uint i = 0; i < TeamBuffer.Length; i ++){
+            // Finds current team index
+            if(compareTwoPixelsColors(Texture[id.xy], TeamBuffer[i].activeColor)) 
+                currentPixelTeam = i;
+
+            // Loop through neighbors cells
+            for(int x = -1; x <= 1; x++){
+                for(int y = -1; y <= 1; y++){
+                    // Create the neighbor coordinates
+                    int2 idFake = int2(id.x + x, id.y + y);
+                    
+                    // Setting looping coordinates
+                    if(idFake.x == -1) idFake.x = screenSizeX - 1;
+                    else if(idFake.x == screenSizeX - 1) idFake.x = 0;
+
+                    if(idFake.y == -1) idFake.y = screenSizeY - 1;
+                    else if(idFake.y == screenSizeY - 1) idFake.y = 0;
+
+                    // Verificate pixels color
+                    if(compareTwoPixelsColors(Texture[idFake.xy], TeamBuffer[i].activeColor))
+                        sameTeamNeighborsCount[i] += 1;
+                }
+            }
+            if(sameTeamNeighborsCount[i] >= strongestTeamForce){
+                strongestTeamForce = sameTeamNeighborsCount[i];
+                strongestTeam = i;
+            }
+        }
+
+        float4 averageColor = averageColors(id);
+        // Rules
+        float4 targetColor = Texture[id.xy];
+        // If current pixel is inactive and strongest team force is above factor, become strongest team
+        if(currentPixelTeam == -1 && strongestTeam >= 0 && strongestTeamForce >= RuleBuffer[0].cellBirthFactor) 
+            targetColor = TeamBuffer[strongestTeam].activeColor;
+        // If there's a known current pixel winning
+        else if(currentPixelTeam >= 0){
+            // If strongest team force is greater than current pixel strength and above conqueer factor, become the strongest team
+            if(strongestTeam >= 0 && sameTeamNeighborsCount[currentPixelTeam] + RuleBuffer[0].teamConqueerFactor < strongestTeam  && strongestTeamForce >= RuleBuffer[0].teamConqueerFactor)
+                targetColor = TeamBuffer[strongestTeam].activeColor;
+            // If lonely, pixel become inactive
+            else if(sameTeamNeighborsCount[currentPixelTeam] == RuleBuffer[0].lonelinessFactor) 
+                targetColor = averageColor;
+            // If neighborhood is overpopulated, pixel become inactive
+            else if(sameTeamNeighborsCount[currentPixelTeam] >= RuleBuffer[0].overPopulationFactor) 
+                targetColor = averageColor;
+        }
+
+
+
+
+        // Assign color to current position
+        Texture[id.xy] = targetColor;
+    }
+}
+
+// Methods logics
+bool compareTwoPixelsColors(float4 pixelA, float4 pixelB){
+    half3 delta = abs(pixelA.rgb - pixelB.rgb);
+    return (delta.r + delta.g + delta.b) < 0.005f;
+}
+
+bool compareTwoPixelsColorsIfGreaterOrEqual(float4 pixelA, float4 pixelB){
+    return all(pixelA >= pixelB);
+}
+
+bool compareTwoPixelsColorsIfLesserOrEqual(float4 pixelA, float4 pixelB){
+    return all(pixelA <= pixelB);
+}
+
+float4 fadeToColor(float4 color, float4 finalColor){
+    float4 resultColor = color;
+
+    resultColor.r = (color.r > finalColor.r) ? color.r - 0.005f : color.r + 0.005f;
+    resultColor.g = (color.g > finalColor.g) ? color.g - 0.005f : color.g + 0.005f;
+    resultColor.b = (color.b > finalColor.b) ? color.b - 0.005f : color.b + 0.005f;
+
+    return resultColor;
+}
+
+float4 averageColors (uint3 id){
+    float4 sum = float4(0,0,0,0);
+    // Loop through neighbors cells
+    for(int x = -1; x <= 1; x++){
+        for(int y = -1; y <= 1; y++){
+            // Create the neighbor coordinates
+            int2 idFake = int2(id.x + x, id.y + y);
+            // Setting looping coordinates
+            if(idFake.x == -1) idFake.x = screenSizeX - 1;
+            else if(idFake.x == screenSizeX - 1) idFake.x = 0;
+            if(idFake.y == -1) idFake.y = screenSizeY - 1;
+            else if(idFake.y == screenSizeY - 1) idFake.y = 0;
+
+            sum.r += Texture[idFake.xy].r;
+            sum.g += Texture[idFake.xy].g;
+            sum.b += Texture[idFake.xy].b;
+            sum.a += Texture[idFake.xy].a;
+        }
+    }
+    sum.r /= 9.0f;
+    sum.g /= 9.0f;
+    sum.b /= 9.0f;
+    sum.a /= 9.0f;
+
+    return sum;
+}

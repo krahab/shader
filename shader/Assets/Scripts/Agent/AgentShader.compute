@@ -1,0 +1,98 @@
+#pragma kernel AgentShader
+
+RWTexture2D<float4> Texture;
+int screenSizeX;
+int screenSizeY;
+
+struct Agent {
+    float2 position;
+    float angle;
+    int cellIndex;
+};
+
+struct Cell
+{
+    float speed;
+    float4 cellColor;
+};
+
+struct InitialBackgroundColor
+{
+    float4 backgroundColor;
+};
+
+RWStructuredBuffer<Cell> cellsBuffer;
+RWStructuredBuffer<Agent> agentsBuffer;
+RWStructuredBuffer<InitialBackgroundColor> initialBackgroundColor;
+
+uint numCell;
+uint nbrAgents;
+float deltaTime;
+uint init;
+uint borderCollisionType;
+
+float4 fadeToColor(float4 color, float4 finalColor);
+
+[numthreads(16,1,1)]
+void AgentShader (uint3 id : SV_DispatchThreadID)
+{
+    // Initialization
+    if(init == 1)
+    {
+        Texture[id.xy] = initialBackgroundColor[0].backgroundColor;
+        return;
+    }
+
+    Texture[id.xy] = fadeToColor(Texture[id.xy], initialBackgroundColor[0].backgroundColor);
+
+    // Update all agents
+    if (id.x >= nbrAgents) {
+        return;
+    }
+
+    // Move all agents
+    Agent agent = agentsBuffer[id.x];
+    Cell cell = cellsBuffer[agent.cellIndex];
+
+    
+    // Move agent
+    float2 direction = float2(cos(agent.angle), sin(agent.angle));
+    float2 newPos = agent.position + direction * deltaTime /10 * cell.speed;
+
+    [forcecase] switch(borderCollisionType)
+    {
+        case 0:
+            // Resets to origin
+            if(newPos.x >= screenSizeX || newPos.x <= 0 || newPos.y >= screenSizeY || newPos.y <= 0)
+            {
+                newPos.x = newPos.y = screenSizeX /2;
+                newPos.y = screenSizeY /2;
+            }
+            break;
+        case 1:
+            // Check X
+            if(newPos.x <= -1) newPos.x = screenSizeX - 1;
+            else if(newPos.x >= screenSizeX - 1) newPos.x = 0;
+            // Check Y
+            if(newPos.y <= -1) newPos.y = screenSizeY - 1;
+            else if(newPos.y >= screenSizeY - 1) newPos.y = 0;
+            break;
+    }
+    
+     int cellX = (int)newPos.x;
+     int cellY = (int)newPos.y;
+     Texture[int2(cellX, cellY)] = cell.cellColor;
+    
+     agentsBuffer[id.x].position = newPos;
+}
+
+float4 fadeToColor(float4 color, float4 finalColor){
+    float4 resultColor = color;
+    float updateValue = 0.01f;
+    resultColor.r = (color.r > finalColor.r) ? color.r - updateValue : color.r + updateValue;
+    resultColor.g = (color.g > finalColor.g) ? color.g - updateValue : color.g + updateValue;
+    resultColor.b = (color.b > finalColor.b) ? color.b - updateValue : color.b + updateValue;
+    resultColor.a = (color.a > finalColor.a) ? color.a - updateValue : color.a + updateValue;
+
+    return resultColor;
+}
